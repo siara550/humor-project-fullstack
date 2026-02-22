@@ -1,37 +1,42 @@
+// app/auth/callback/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServerClient } from "@supabase/ssr";
 
 export async function GET(request: Request) {
-  try {
-    const { searchParams, origin } = new URL(request.url);
-    const code = searchParams.get("code");
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
 
-    if (!code) {
-      return NextResponse.redirect(`${origin}/login?error=missing_code`);
-    }
+  const redirectTo = `${url.origin}/protected`; // change to /list if that's your real page
 
-    const supabase = await createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+  // Create the response we will return (IMPORTANT: cookies get set on THIS response)
+  const response = NextResponse.redirect(redirectTo);
 
-    if (error) {
-      return NextResponse.redirect(`${origin}/login?error=oauth`);
-    }
-
-    // after login go to protected feed
-    return NextResponse.redirect(`${origin}/protected`);
-  } catch (e: any) {
-    // If anything crashes, show a readable error instead of blank 500
-    return new NextResponse(
-      JSON.stringify(
-        {
-          ok: false,
-          where: "/auth/callback",
-          message: e?.message ?? String(e),
-        },
-        null,
-        2
-      ),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
+  if (!code) {
+    return NextResponse.redirect(`${url.origin}/login`);
   }
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return (request as any).cookies?.getAll?.() ?? [];
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }: any) => {
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    }
+  );
+
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+  if (error) {
+    return NextResponse.redirect(`${url.origin}/login?error=oauth`);
+  }
+
+  return response;
 }
